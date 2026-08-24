@@ -22,7 +22,8 @@ jobs:
       #
       # 要添加更多构建类型（Release、Debug、RelWithDebInfo 等），请自定义 build_type 列表。
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        # 仅 Linux：blockmalloc ABI 产物只有 linux-x86_64，macOS 无法使用预编译 .so
+        os: [ubuntu-latest]
         build_type: [Release]
         c_compiler: [gcc, clang]
         include:
@@ -32,15 +33,12 @@ jobs:
           - os: ubuntu-latest
             c_compiler: clang
             cpp_compiler: clang++
-          - os: macos-latest
-            c_compiler: clang
-            cpp_compiler: clang++
-        exclude:
-          # 排除 macOS 的 gcc 配置，避免兼容性问题
-          - os: macos-latest
-            c_compiler: gcc
     steps:
     - uses: actions/checkout@v4
+
+    - name: 下载 ABI 依赖
+      env: { GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
+      run: ./ci/deps.sh
 
     - name: 设置可重用字符串
       # 将重复输入字符串（例如构建输出目录）转换为步骤输出。这些步骤输出可以在整个工作流文件中使用。
