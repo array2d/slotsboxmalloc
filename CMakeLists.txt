@@ -20,22 +20,10 @@ target_compile_definitions(slotsboxmalloc PRIVATE
     $<$<CONFIG:Debug>:ENABLE_LOG>
 )
 
-include(FetchContent)
-
-# blockmalloc
-find_package(blockmalloc CONFIG QUIET)
-if(blockmalloc_FOUND)
-    message(STATUS "find_package(blockmalloc) ok")
-else()
-    message(STATUS "find_package(blockmalloc) failed; FetchContent download")
-    FetchContent_Declare(
-        blockmalloc
-        GIT_REPOSITORY https://github.com/miaobyte/blockmalloc.git
-        GIT_TAG        main
-    )
-    FetchContent_MakeAvailable(blockmalloc)
-endif()
-
+# blockmalloc —— 由 ci/deps.sh 下载到 libso/（不再 find_package/FetchContent）
+set(DEPS_DIR "${CMAKE_SOURCE_DIR}/libso")
+target_include_directories(slotsboxmalloc PUBLIC "${DEPS_DIR}/include")
+target_link_directories(slotsboxmalloc PUBLIC "${DEPS_DIR}/lib")
 target_link_libraries(slotsboxmalloc PUBLIC blockmalloc)
 
 add_subdirectory(tutorial)
