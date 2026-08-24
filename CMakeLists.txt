@@ -21,9 +21,8 @@ target_compile_definitions(slotsboxmalloc PRIVATE
 )
 
 # blockmalloc —— 由 ci/deps.sh 下载到 libso/（不再 find_package/FetchContent）
-set(DEPS_DIR "${CMAKE_SOURCE_DIR}/libso")
-target_include_directories(slotsboxmalloc PUBLIC "${DEPS_DIR}/include")
-target_link_directories(slotsboxmalloc PUBLIC "${DEPS_DIR}/lib")
+include_directories("${CMAKE_SOURCE_DIR}/libso/include")
+link_directories("${CMAKE_SOURCE_DIR}/libso/lib")
 target_link_libraries(slotsboxmalloc PUBLIC blockmalloc)
 
 add_subdirectory(tutorial)
