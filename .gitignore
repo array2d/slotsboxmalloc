@@ -15,3 +15,5 @@ debian/libslotsboxmalloc1-dev
 *.log
 *.substvars
 debian/files*
+# test artifact
+tutorial/test_failures.csv

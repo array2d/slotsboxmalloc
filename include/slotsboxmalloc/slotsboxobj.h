@@ -117,9 +117,8 @@ typedef struct {
     uint8_t  objlevel;            // box level (≥1)
     uint8_t  _pad0;
 
-    uint8_t  box_boundary;        // 子 box 右边界: boxes ∈ [0, box_b)
-    uint8_t  obj_boundary;        // 对象左边界:   objs  ∈ (obj_b, 63]
-    uint8_t  _pad1[2];
+    int16_t  box_boundary;        // 子 box 右边界: boxes ∈ [0, box_b), 满时=64
+    int16_t  obj_boundary;        // 对象左边界:   objs  ∈ (obj_b, 63], 填到 slot0 时=-1
 
     sbo_usage_t child_max_cap;    // 子树容量 hint
     uint8_t  free_bitmap[SBO_BITMAP_B]; // bit=1→FREE
@@ -305,7 +304,7 @@ static inline int8_t sbo_alloc_box_slot(sbo_meta_t *meta, sbo_box_t *box) {
         if (sbo_bm_get(box->free_bitmap, p)) {
             sbo_bm_clear(box->free_bitmap, p);
             box->slots[p].state = SBO_BOX;
-            box->box_boundary = (uint8_t)(p + 1);
+            box->box_boundary = (int16_t)(p + 1);
             return (int8_t)p;
         }
     }
@@ -327,7 +326,7 @@ static inline int8_t sbo_alloc_obj_slots(sbo_meta_t *meta, sbo_box_t *box, uint8
             box->slots[start].state = SBO_OBJ_START;
             for (int j = start + 1; j < start + m; j++)
                 box->slots[j].state = SBO_OBJ_CONT;
-            box->obj_boundary = (uint8_t)(start - 1);
+            box->obj_boundary = (int16_t)(start - 1);
             uint8_t nc = sbo_continuous_max(box);
             if (box->max_obj_cap != nc) {
                 box->max_obj_cap = nc;
