@@ -21,8 +21,9 @@ jobs:
           set -euo pipefail
           v="${GITHUB_REF_NAME}"
           d="slotsboxmalloc-abi-$v-linux-x86_64"
-          mkdir -p "$d/include" "$d/lib"
-          # 递归收集：头（整目录，保持层级）+ 库（扫构建目录的 .so*/.dylib，-P 保符号链接）
+          # 本库是 header-only（#define SLOTSBOXMALLOC_IMPLEMENTATION 单头文件）：
+          # 只发头，不发 .so —— 消费者把实现体编进自己的 TU。
+          mkdir -p "$d/include"
           cp -R include/. "$d/include/"
           find build -maxdepth 3 \( -name 'lib*.so*' -o -name 'lib*.dylib' \) -exec cp -P {} "$d/lib/" \;
           # 本仓无可执行产物（纯库），故不带 bin/
