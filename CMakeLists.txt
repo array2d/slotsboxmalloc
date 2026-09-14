@@ -20,7 +20,8 @@ target_compile_definitions(slotsboxmalloc PRIVATE
     $<$<CONFIG:Debug>:ENABLE_LOG>
 )
 
-target_link_libraries(slotsboxmalloc PUBLIC blockmalloc)
+# 依赖 blockmalloc 走 header-only（src/slotsboxmalloc.c 里 #define *_IMPLEMENTATION），
+# 故不链接它的 .so；头的搜索路径由系统 include 提供。
 
 add_subdirectory(tutorial)
 
