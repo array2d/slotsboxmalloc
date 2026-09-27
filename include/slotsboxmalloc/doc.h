@@ -152,7 +152,7 @@
  *       box.children[i] = -1
  *       box.v2p[i] = box.p2v[i] = i     // 恒等映射 (预留)
  *
- *   box.child_max_cap = {level: objlevel+1, mult: 1}  // 满 box
+ *   box.child_max_cap = {level: 0, mult: 0}  // no children
  */
 
 /* --- 3.2 alloc_box_slot: 分配一个子 box slot（从左侧） ---

@@ -292,7 +292,7 @@ static inline void sbo_box_format(sbo_meta_t *meta, sbo_box_t *box,
         box->slots[i].state = SBO_FREE;
         box->children[i] = -1;
     }
-    box->child_max_cap = (sbo_usage_t){objlevel + 1, 1};
+    box->child_max_cap = (sbo_usage_t){0, 0};
 }
 
 /* ================================================================

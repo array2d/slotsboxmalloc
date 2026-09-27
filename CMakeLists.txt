@@ -6,6 +6,7 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 
 include(GNUInstallDirs)
+include(CTest)
 
 # shared library (for FFI) + header-only (with SLOTSBOXMALLOC_IMPLEMENTATION)
 add_library(slotsboxmalloc SHARED
