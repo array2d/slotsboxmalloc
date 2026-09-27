@@ -10,14 +10,14 @@
 int main() {
     // 初始化 slotsboxmalloc 的元数据和数据区，使用更大的内存池以支持高负载
     uint8_t *buddy = malloc(4 * 1024 * 1024);     // 元数据区，增大到4MB
-    uint8_t *data = malloc(64 * 1024 * 1024);     // 数据区，增大到64MB
+    uint8_t *data = malloc(128 * 1024 * 1024);
     if (!buddy || !data) {
         perror("Failed to allocate memory for slotsboxmalloc");
         return 1;
     }
 
     // 初始化 slotsboxmalloc
-    if (sbo_init(buddy, 4 * 1024 * 1024, 64 * 1024 * 1024) != 0) {
+    if (sbo_init(buddy, 4 * 1024 * 1024, 128 * 1024 * 1024) != 0) {
         printf("Failed to initialize slotsboxmalloc\n");
         free(buddy);
         free(data);

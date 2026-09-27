@@ -71,3 +71,6 @@ target_link_libraries(16_bench_malloc slotsboxmalloc Threads::Threads)
 
 add_executable(17_data_integrity 17_data_integrity.c)
 target_link_libraries(17_data_integrity slotsboxmalloc)
+
+add_executable(18_capacity_hint 18_capacity_hint.c)
+add_test(NAME 18_capacity_hint COMMAND 18_capacity_hint)
