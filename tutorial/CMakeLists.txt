@@ -71,3 +71,7 @@ target_link_libraries(16_bench_malloc slotsboxmalloc Threads::Threads)
 
 add_executable(17_data_integrity 17_data_integrity.c)
 target_link_libraries(17_data_integrity slotsboxmalloc)
+
+add_executable(18_bitmap_oracle 18_bitmap_oracle.c)
+target_link_libraries(18_bitmap_oracle slotsboxmalloc)
+add_test(NAME 18_bitmap_oracle COMMAND 18_bitmap_oracle)

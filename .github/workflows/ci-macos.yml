@@ -17,4 +17,7 @@ jobs:
           cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local
           cmake --build build -j
       - name: 测试
-        run: cd build && ctest --output-on-failure
+        run: |
+          cd build
+          ctest --output-on-failure
+          ./tutorial/18_bitmap_oracle
