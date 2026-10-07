@@ -26,6 +26,7 @@ ubsan:
 
 test: build
 	@cd build && ctest
+	@build/tutorial/18_bitmap_oracle
 
 deb:
 	dpkg-buildpackage -us -uc -b
