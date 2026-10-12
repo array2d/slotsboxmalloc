@@ -23,6 +23,7 @@ target_compile_definitions(slotsboxmalloc PRIVATE
 # 依赖 blockmalloc 走 header-only（src/slotsboxmalloc.c 里 #define *_IMPLEMENTATION），
 # 故不链接它的 .so；头的搜索路径由系统 include 提供。
 
+enable_testing()
 add_subdirectory(tutorial)
 
 include("${CMAKE_CURRENT_LIST_DIR}/cmake/packagex.cmake")

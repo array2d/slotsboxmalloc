@@ -8,16 +8,17 @@
 #define SMALL_OBJ_SIZE 8  // 小对象大小 <=8byte
 
 int main() {
+    const size_t data_size = 8ULL * 64 * 64 * 64 * 64;
     // 初始化 slotsboxmalloc 的元数据和数据区，使用更大的内存池以支持高负载
     uint8_t *buddy = malloc(4 * 1024 * 1024);     // 元数据区，增大到4MB
-    uint8_t *data = malloc(64 * 1024 * 1024);     // 数据区，增大到64MB
+    uint8_t *data = malloc(data_size);
     if (!buddy || !data) {
         perror("Failed to allocate memory for slotsboxmalloc");
         return 1;
     }
 
     // 初始化 slotsboxmalloc
-    if (sbo_init(buddy, 4 * 1024 * 1024, 64 * 1024 * 1024) != 0) {
+    if (sbo_init(buddy, 4 * 1024 * 1024, data_size) != 0) {
         printf("Failed to initialize slotsboxmalloc\n");
         free(buddy);
         free(data);
@@ -61,6 +62,7 @@ int main() {
     printf("Phase 2: Starting random free/malloc loop (2s limit)...\n");
     srand(time(NULL));  // 初始化随机种子
     long long loop_count = 0;
+    int failed = 0;
     clock_t start = clock();
 
     while (1) {
@@ -77,7 +79,8 @@ int main() {
         uint64_t new_offset = sbo_alloc(buddy, SMALL_OBJ_SIZE);
         if (new_offset == (uint64_t)-1) {
             printf("Re-allocation failed at loop %lld\n", loop_count);
-            break;  // 如果分配失败，退出循环
+            failed = 1;
+            break;
         }
 
         // 更新指针数组
@@ -103,5 +106,5 @@ int main() {
     free(buddy);
     free(data);
     printf("Stress test completed after %lld loops.\n", loop_count);
-    return 0;
+    return failed;
 }
