@@ -268,9 +268,9 @@ static inline void sbo_update_parent(sbo_meta_t *meta, sbo_box_t *box,
         if (sbo_usage_cmp(nm, box->child_max_cap) != 0) box->child_max_cap = nm;
         else child_c = false;
     }
-    if ((slot_c || child_c) && box->parent > 0) {
+    if ((slot_c || child_c) && sbo_self_id(meta, box) != 0) {
         sbo_box_t *p = sbo_child(meta, box, box->parent);
-        if (p) sbo_update_parent(meta, p, slot_c, child_c);
+        if (p) sbo_update_parent(meta, p, false, true);
     }
 }
 
@@ -292,7 +292,7 @@ static inline void sbo_box_format(sbo_meta_t *meta, sbo_box_t *box,
         box->slots[i].state = SBO_FREE;
         box->children[i] = -1;
     }
-    box->child_max_cap = (sbo_usage_t){objlevel + 1, 1};
+    box->child_max_cap = (sbo_usage_t){0, 0};
 }
 
 /* ================================================================
@@ -330,7 +330,7 @@ static inline int8_t sbo_alloc_obj_slots(sbo_meta_t *meta, sbo_box_t *box, uint8
             uint8_t nc = sbo_continuous_max(box);
             if (box->max_obj_cap != nc) {
                 box->max_obj_cap = nc;
-                if (box->parent > 0) {
+                if (sbo_self_id(meta, box) != 0) {
                     sbo_box_t *pp = sbo_child(meta, box, box->parent);
                     if (pp) sbo_update_parent(meta, pp, false, true);
                 }
@@ -358,7 +358,7 @@ static inline void sbo_free_obj_slots(sbo_meta_t *meta, sbo_box_t *box, uint8_t 
     uint8_t nc = sbo_continuous_max(box);
     if (box->max_obj_cap != nc) {
         box->max_obj_cap = nc;
-        if (box->parent > 0) {
+        if (sbo_self_id(meta, box) != 0) {
             sbo_box_t *parent = sbo_child(meta, box, box->parent);
             if (parent) sbo_update_parent(meta, parent, false, true);
         }
@@ -372,7 +372,7 @@ static inline void sbo_free_obj_slots(sbo_meta_t *meta, sbo_box_t *box, uint8_t 
 #define SBO_ALLOC_FAIL ((uint64_t)-1)
 
 static inline uint64_t sbo_find_alloc(sbo_meta_t *meta, sbo_box_t *box,
-                                       sbo_box_t *parent, sbo_usage_t usage) {
+                                       sbo_usage_t usage) {
     if (!box || box->state != SBO_BOX) return SBO_ALLOC_FAIL;
 
     if (usage.level == box->objlevel) {
@@ -388,7 +388,7 @@ static inline uint64_t sbo_find_alloc(sbo_meta_t *meta, sbo_box_t *box,
             sbo_box_t *ch = sbo_child(meta, box, box->children[i]);
             if (!ch) continue;
             if (sbo_usage_cmp(sbo_box_and_child_max_cap(ch), usage) < 0) continue;
-            uint64_t sub = sbo_find_alloc(meta, ch, box, usage);
+            uint64_t sub = sbo_find_alloc(meta, ch, usage);
             if (sub != SBO_ALLOC_FAIL)
                 return sbo_offset_raw(box->objlevel, (uint8_t)i) + sub;
         }
@@ -408,15 +408,11 @@ static inline uint64_t sbo_find_alloc(sbo_meta_t *meta, sbo_box_t *box,
         sbo_box_format(meta, ch, box->objlevel - 1, sbo_self_id(meta, box));
         ch->slot_id = box->slot_id;
 
-        uint8_t nc = sbo_continuous_max(box);
-        if (box->max_obj_cap != nc) {
-            box->max_obj_cap = nc;
-            if (parent) sbo_update_parent(meta, parent, true, false);
-        }
+        sbo_update_parent(meta, box, true, true);
 
         sbo_usage_t ch_max = {ch->objlevel + 1, 1};
         if (sbo_usage_cmp(ch_max, usage) >= 0) {
-            uint64_t sub = sbo_find_alloc(meta, ch, box, usage);
+            uint64_t sub = sbo_find_alloc(meta, ch, usage);
             if (sub != SBO_ALLOC_FAIL)
                 return sbo_offset_raw(box->objlevel, (uint8_t)slot) + sub;
         }
@@ -482,6 +478,7 @@ int sbo_init(void *metaptr, size_t head_size, size_t data_size) {
     meta->per_slot_meta = per_slot_meta;
 
     for (uint8_t si = 0; si < root_slots; si++) {
+        atomic_init(&sbo_pool_lock(meta, si)->lock, 0);
         void *pool_mem = sbo_pool_mem(meta, si);
         blocks_init(sbo_pool_meta(meta, si), per_slot_meta, sizeof(sbo_box_t));
 
@@ -518,7 +515,7 @@ uint64_t sbo_alloc(void *metaptr, size_t size) {
         sbo_box_t *root = (sbo_box_t *)((uint8_t *)sbo_pool_mem(meta, si)
                           + meta->sizeof_block_head);
         if (sbo_usage_cmp(sbo_box_and_child_max_cap(root), usage) >= 0) {
-            uint64_t off = sbo_find_alloc(meta, root, NULL, usage);
+            uint64_t off = sbo_find_alloc(meta, root, usage);
             if (off != SBO_ALLOC_FAIL) {
                 uint64_t total = (uint64_t)si * meta->slot_bytes + off;
                 if (total + sbo_offset_of(usage) <= meta->data_size) {
