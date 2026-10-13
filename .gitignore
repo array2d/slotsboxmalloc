@@ -5,6 +5,9 @@ build/
 .vscode
 .idea
 
+# tool
+.omc/
+
 #install
 obj-x86_64*
 debian/.debhelper
