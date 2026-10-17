@@ -38,6 +38,7 @@ endif()
 
 target_link_libraries(slotsboxmalloc PUBLIC blockmalloc)
 
+enable_testing()
 add_subdirectory(tutorial)
 
 include("${CMAKE_CURRENT_LIST_DIR}/cmake/packagex.cmake")

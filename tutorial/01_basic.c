@@ -5,10 +5,9 @@
 #include <slotsboxmalloc/slotsboxobj.h>
 
 int main(void) {
-    size_t data_size = 8ULL * 64 * 64 * 64 * 64;   // 16MB
+    size_t data_size = 8ULL * 64 * 64 * 64 * 64;
     size_t head_size = sbo_meta_size(data_size, 256 * 1024);
 
-    // meta 和 data 分离
     uint8_t *meta = (uint8_t *)malloc(head_size);
     uint8_t *data = (uint8_t *)malloc(data_size);
     if (!meta || !data) { printf("malloc fail\n"); return 1; }
