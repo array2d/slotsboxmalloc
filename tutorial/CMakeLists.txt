@@ -81,3 +81,8 @@ add_executable(19_bitmap_oracle 19_bitmap_oracle.c)
 target_link_libraries(19_bitmap_oracle slotsboxmalloc)
 add_test(NAME 19_bitmap_oracle COMMAND 19_bitmap_oracle)
 
+# -- 18: randomized model check (overlap / capacity / no false OOM) --
+add_executable(18_model_check 18_model_check.c)
+target_link_libraries(18_model_check slotsboxmalloc Threads::Threads)
+add_test(NAME 18_model_check COMMAND 18_model_check 4 10000)
+set_tests_properties(18_model_check PROPERTIES TIMEOUT 120)

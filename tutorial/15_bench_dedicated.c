@@ -11,14 +11,6 @@
 #define META_SIZE (1024 * 1024)
 #define DATA_SIZE (8ULL * 64 * 64 * 64 * 64)
 
-// Private allocator: each thread does alloc+free entirely within its home slot
-// by directly calling box_alloc with slot-distinctive sizes that hash to
-// different slots. Since box_alloc uses `size` to pick a starting slot,
-// we pass thread_id as size to force slot_id = thread_id.
-//
-// This simulates N independent allocators sharing one meta area — the ideal
-// concurrent access pattern with zero cache-line contention.
-
 static const size_t kSz[] = {8, 64, 512, 4096};
 static _Atomic long total = 0;
 
