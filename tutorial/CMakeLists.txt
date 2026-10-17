@@ -76,3 +76,8 @@ add_test(NAME 17_data_integrity COMMAND 17_data_integrity)
 add_executable(18_capacity 18_capacity.c)
 target_link_libraries(18_capacity slotsboxmalloc)
 add_test(NAME 18_capacity COMMAND 18_capacity)
+
+add_executable(19_bitmap_oracle 19_bitmap_oracle.c)
+target_link_libraries(19_bitmap_oracle slotsboxmalloc)
+add_test(NAME 19_bitmap_oracle COMMAND 19_bitmap_oracle)
+

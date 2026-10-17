@@ -164,9 +164,24 @@ size_t   sbo_meta_size(size_t data_size, size_t per_slot_pool);
 #include <blockmalloc/blockmalloc.h>
 
 /* ================================================================
- * free_bitmap helpers (byte-oriented)
+ * free_bitmap helpers (64-bit word + byte-oriented)
  * ================================================================ */
 
+static inline uint64_t sbo_bm_load(const uint8_t *bm) {
+    uint64_t v = 0;
+    for (int i = 0; i < SBO_BITMAP_B; i++)
+        v |= (uint64_t)bm[i] << (8 * i);
+    return v;
+}
+static inline void sbo_bm_store(uint8_t *bm, uint64_t v) {
+    for (int i = 0; i < SBO_BITMAP_B; i++)
+        bm[i] = (uint8_t)(v >> (8 * i));
+}
+static inline uint64_t sbo_bm_range_mask(int start, int count) {
+    if (count <= 0 || start < 0 || start >= SBO_N) return 0;
+    if (count >= SBO_N - start) return UINT64_MAX << start;
+    return ((UINT64_C(1) << count) - 1) << start;
+}
 static inline bool sbo_bm_get(uint8_t *bm, int i) {
     return (bm[i >> 3] >> (i & 7)) & 1;
 }
@@ -176,24 +191,17 @@ static inline void sbo_bm_set(uint8_t *bm, int i) {
 static inline void sbo_bm_clear(uint8_t *bm, int i) {
     bm[i >> 3] &= (uint8_t)~(1 << (i & 7));
 }
-static inline bool sbo_bm_test_range(uint8_t *bm, int start, int count) {
-    for (int i = start; i < start + count; i++)
-        if (!sbo_bm_get(bm, i)) return false;
-    return true;
-}
 static inline void sbo_bm_fill(uint8_t *bm) {
     memset(bm, 0xFF, SBO_BITMAP_B);
 }
 static inline void sbo_bm_clear_range(uint8_t *bm, int start, int count) {
-    for (int i = start; i < start + count; i++) sbo_bm_clear(bm, i);
+    sbo_bm_store(bm, sbo_bm_load(bm) & ~sbo_bm_range_mask(start, count));
 }
 static inline void sbo_bm_set_range(uint8_t *bm, int start, int count) {
-    for (int i = start; i < start + count; i++) sbo_bm_set(bm, i);
+    sbo_bm_store(bm, sbo_bm_load(bm) | sbo_bm_range_mask(start, count));
 }
 static inline int sbo_bm_popcount(uint8_t *bm) {
-    int n = 0;
-    for (int i = 0; i < SBO_N; i++) if (sbo_bm_get(bm, i)) n++;
-    return n;
+    return __builtin_popcountll(sbo_bm_load(bm));
 }
 
 /* ================================================================
@@ -226,13 +234,29 @@ static inline int32_t sbo_self_id(sbo_meta_t *meta, sbo_box_t *box) {
  * 容量查询
  * ================================================================ */
 
+static inline uint8_t sbo_bm_continuous_max(uint64_t m) {
+    if (!m) return 0;
+    uint64_t u = m + (m & (~m + 1ULL));
+    if (__builtin_expect((u & (u - 1ULL)) == 0, 1))
+        return (uint8_t)(SBO_N - __builtin_clzll(m) - __builtin_ctzll(m));
+    uint64_t m2  = m   & (m   >> 1);
+    uint64_t m4  = m2  & (m2  >> 2);
+    uint64_t m8  = m4  & (m4  >> 4);
+    uint64_t m16 = m8  & (m8  >> 8);
+    uint64_t m32 = m16 & (m16 >> 16);
+    uint8_t best = 1;
+    uint64_t x = m, y;
+    y = (x >> 32) & m32; if (y) { x = y; best += 32; }
+    y = (x >> 16) & m16; if (y) { x = y; best += 16; }
+    y = (x >> 8)  & m8;  if (y) { x = y; best += 8;  }
+    y = (x >> 4)  & m4;  if (y) { x = y; best += 4;  }
+    y = (x >> 2)  & m2;  if (y) { x = y; best += 2;  }
+    y = (x >> 1)  & m;   if (y) { best += 1; }
+    return best;
+}
+
 static inline uint8_t sbo_continuous_max(sbo_box_t *box) {
-    uint8_t cur = 0, best = 0;
-    for (int i = 0; i < SBO_N; i++) {
-        if (sbo_bm_get(box->free_bitmap, i)) cur++;
-        else { if (cur > best) best = cur; cur = 0; }
-    }
-    return cur > best ? cur : best;
+    return sbo_bm_continuous_max(sbo_bm_load(box->free_bitmap));
 }
 
 static inline sbo_usage_t sbo_box_max_cap(sbo_box_t *box) {
@@ -258,7 +282,8 @@ static inline void sbo_update_parent(sbo_meta_t *meta, sbo_box_t *box,
     }
     if (child_c) {
         sbo_usage_t nm = {0, 0};
-        for (int i = 0; i < SBO_N; i++) {
+        int lim = box->box_boundary < SBO_N ? box->box_boundary : SBO_N;
+        for (int i = 0; i < lim; i++) {
             if (box->slots[i].state != SBO_BOX) continue;
             sbo_box_t *ch = sbo_child(meta, box, box->children[i]);
             if (!ch) continue;
@@ -300,15 +325,18 @@ static inline void sbo_box_format(sbo_meta_t *meta, sbo_box_t *box,
  * ================================================================ */
 
 static inline int8_t sbo_alloc_box_slot(sbo_meta_t *meta, sbo_box_t *box) {
-    for (int p = box->box_boundary; p <= box->obj_boundary; p++) {
-        if (sbo_bm_get(box->free_bitmap, p)) {
-            sbo_bm_clear(box->free_bitmap, p);
-            box->slots[p].state = SBO_BOX;
-            box->box_boundary = (int16_t)(p + 1);
-            return (int8_t)p;
-        }
-    }
-    return -1;
+    (void)meta;
+    int lo = box->box_boundary > 0 ? box->box_boundary : 0;
+    int hi = box->obj_boundary < SBO_N - 1 ? box->obj_boundary : SBO_N - 1;
+    if (lo > hi || lo >= SBO_N || hi < 0) return -1;
+    uint64_t mask = (UINT64_MAX << lo) & (UINT64_MAX >> (SBO_N - 1 - hi));
+    uint64_t runs = sbo_bm_load(box->free_bitmap) & mask;
+    if (!runs) return -1;
+    int p = __builtin_ctzll(runs);
+    sbo_bm_clear(box->free_bitmap, p);
+    box->slots[p].state = SBO_BOX;
+    box->box_boundary = (int16_t)(p + 1);
+    return (int8_t)p;
 }
 
 /* ================================================================
@@ -316,29 +344,34 @@ static inline int8_t sbo_alloc_box_slot(sbo_meta_t *meta, sbo_box_t *box) {
  * ================================================================ */
 
 static inline int8_t sbo_alloc_obj_slots(sbo_meta_t *meta, sbo_box_t *box, uint8_t m) {
-    if (m == 0 || m > SBO_MULT_MAX) return -1;
-    // 从 N-1 向左扫描全范围: 覆盖 free 产生的右侧空洞
-    for (int p = SBO_N - 1; p >= box->box_boundary; p--) {
-        int start = p - m + 1;
-        if (start < box->box_boundary) break;
-        if (sbo_bm_test_range(box->free_bitmap, start, m)) {
-            sbo_bm_clear_range(box->free_bitmap, start, m);
-            box->slots[start].state = SBO_OBJ_START;
-            for (int j = start + 1; j < start + m; j++)
-                box->slots[j].state = SBO_OBJ_CONT;
-            box->obj_boundary = (int16_t)(start - 1);
-            uint8_t nc = sbo_continuous_max(box);
-            if (box->max_obj_cap != nc) {
-                box->max_obj_cap = nc;
-                if (sbo_self_id(meta, box) != 0) {
-                    sbo_box_t *pp = sbo_child(meta, box, box->parent);
-                    if (pp) sbo_update_parent(meta, pp, false, true);
-                }
-            }
-            return (int8_t)start;
+    if (m == 0 || m > SBO_MULT_MAX || m > box->max_obj_cap || box->box_boundary >= SBO_N)
+        return -1;
+    int lo = box->box_boundary > 0 ? box->box_boundary : 0;
+    uint64_t bm = sbo_bm_load(box->free_bitmap);
+    uint64_t runs = bm & (UINT64_MAX << lo);
+    /* 倍增移位与运算定位长度为 m 的连续空闲段起点，保留最右适配策略 */
+    for (int width = 1; width < m;) {
+        int step = width < m - width ? width : m - width;
+        runs &= runs >> step;
+        width += step;
+    }
+    if (!runs) return -1;
+    int start = 63 - __builtin_clzll(runs);
+    bm &= ~sbo_bm_range_mask(start, m);
+    sbo_bm_store(box->free_bitmap, bm);
+    box->slots[start].state = SBO_OBJ_START;
+    for (int j = start + 1; j < start + m; j++)
+        box->slots[j].state = SBO_OBJ_CONT;
+    box->obj_boundary = (int16_t)(start - 1);
+    uint8_t nc = sbo_bm_continuous_max(bm);
+    if (box->max_obj_cap != nc) {
+        box->max_obj_cap = nc;
+        if (sbo_self_id(meta, box) != 0) {
+            sbo_box_t *pp = sbo_child(meta, box, box->parent);
+            if (pp) sbo_update_parent(meta, pp, false, true);
         }
     }
-    return -1;
+    return (int8_t)start;
 }
 
 /* ================================================================
@@ -348,14 +381,14 @@ static inline int8_t sbo_alloc_obj_slots(sbo_meta_t *meta, sbo_box_t *box, uint8
 static inline void sbo_free_obj_slots(sbo_meta_t *meta, sbo_box_t *box, uint8_t start) {
     int p = start;
     box->slots[p].state = SBO_FREE;
-    sbo_bm_set(box->free_bitmap, p);
     p++;
     while (p < SBO_N && box->slots[p].state == SBO_OBJ_CONT) {
         box->slots[p].state = SBO_FREE;
-        sbo_bm_set(box->free_bitmap, p);
         p++;
     }
-    uint8_t nc = sbo_continuous_max(box);
+    uint64_t bm = sbo_bm_load(box->free_bitmap) | sbo_bm_range_mask(start, p - start);
+    sbo_bm_store(box->free_bitmap, bm);
+    uint8_t nc = sbo_bm_continuous_max(bm);
     if (box->max_obj_cap != nc) {
         box->max_obj_cap = nc;
         if (sbo_self_id(meta, box) != 0) {
@@ -376,6 +409,7 @@ static inline uint64_t sbo_find_alloc(sbo_meta_t *meta, sbo_box_t *box,
     if (!box || box->state != SBO_BOX) return SBO_ALLOC_FAIL;
 
     if (usage.level == box->objlevel) {
+        if (usage.multiple > box->max_obj_cap) return SBO_ALLOC_FAIL;
         int8_t slot = sbo_alloc_obj_slots(meta, box, usage.multiple);
         if (slot < 0) return SBO_ALLOC_FAIL;
         return sbo_offset_raw(box->objlevel, (uint8_t)slot);
@@ -383,14 +417,17 @@ static inline uint64_t sbo_find_alloc(sbo_meta_t *meta, sbo_box_t *box,
 
     if (usage.level < box->objlevel) {
         // 先遍历已有子 box
-        for (int i = 0; i < SBO_N; i++) {
-            if (box->children[i] < 0) continue;
-            sbo_box_t *ch = sbo_child(meta, box, box->children[i]);
-            if (!ch) continue;
-            if (sbo_usage_cmp(sbo_box_and_child_max_cap(ch), usage) < 0) continue;
-            uint64_t sub = sbo_find_alloc(meta, ch, usage);
-            if (sub != SBO_ALLOC_FAIL)
-                return sbo_offset_raw(box->objlevel, (uint8_t)i) + sub;
+        if (sbo_usage_cmp(box->child_max_cap, usage) >= 0) {
+            int lim = box->box_boundary < SBO_N ? box->box_boundary : SBO_N;
+            for (int i = 0; i < lim; i++) {
+                if (box->children[i] < 0) continue;
+                sbo_box_t *ch = sbo_child(meta, box, box->children[i]);
+                if (!ch) continue;
+                if (sbo_usage_cmp(sbo_box_and_child_max_cap(ch), usage) < 0) continue;
+                uint64_t sub = sbo_find_alloc(meta, ch, usage);
+                if (sub != SBO_ALLOC_FAIL)
+                    return sbo_offset_raw(box->objlevel, (uint8_t)i) + sub;
+            }
         }
         // 无已有子 box 满足 → 从左侧分配新子 box slot
         int8_t slot = sbo_alloc_box_slot(meta, box);
