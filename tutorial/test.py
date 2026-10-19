@@ -9,7 +9,7 @@ from pathlib import Path
 RED, GREEN, YELLOW, NC = "\033[0;31m", "\033[0;32m", "\033[1;33m", "\033[0m"
 ROOT = Path(__file__).resolve().parent.parent
 FAIL_CSV = (ROOT / "tutorial" / "test_failures.csv").resolve()
-TIMEOUT = 60  # 03_stress 有无界循环，给较长超时
+TIMEOUT = 60
 
 
 def discover(build_dir: Path) -> list[Path]:

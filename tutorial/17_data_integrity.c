@@ -35,7 +35,6 @@ int main() {
     live_t live[MAX_LIVE];
     int nlive = 0;
 
-    // 只选 8 的倍数，保证 tail 也对齐
     size_t sizes[] = {8, 16, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384};
     int ns = (int)(sizeof(sizes) / sizeof(sizes[0]));
     uint64_t seed = 1;

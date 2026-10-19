@@ -73,11 +73,8 @@ add_executable(17_data_integrity 17_data_integrity.c)
 target_link_libraries(17_data_integrity slotsboxmalloc)
 add_test(NAME 17_data_integrity COMMAND 17_data_integrity)
 
-add_executable(18_capacity 18_capacity.c)
-target_link_libraries(18_capacity slotsboxmalloc)
-add_test(NAME 18_capacity COMMAND 18_capacity)
-
-add_executable(19_bitmap_oracle 19_bitmap_oracle.c)
-target_link_libraries(19_bitmap_oracle slotsboxmalloc)
-add_test(NAME 19_bitmap_oracle COMMAND 19_bitmap_oracle)
-
+# -- 18: randomized model check (overlap / capacity / no false OOM) --
+add_executable(18_model_check 18_model_check.c)
+target_link_libraries(18_model_check slotsboxmalloc Threads::Threads)
+add_test(NAME 18_model_check COMMAND 18_model_check 4 10000)
+set_tests_properties(18_model_check PROPERTIES TIMEOUT 120)
