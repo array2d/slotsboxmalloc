@@ -175,7 +175,7 @@ static inline sbo_ctx_t sbo_ctx_for(sbo_meta_t *meta, uint8_t si, sbo_lock_t *lk
     return c;
 }
 static inline sbo_box_t *sbo_box_at(const sbo_ctx_t *c, int32_t id) {
-    return (sbo_box_t *)(c->pool + (uint32_t)id * c->stride + c->head);
+    return (sbo_box_t *)(c->pool + (size_t)(uint32_t)id * c->stride + c->head);
 }
 
 static inline uint8_t sbo_mask_contmax(uint64_t m) {
@@ -377,11 +377,11 @@ static uint64_t sbo_find_alloc(sbo_ctx_t *c, sbo_box_t *box,
     }
 
     uint32_t need_blk = (uint32_t)(box->objlevel - usage.level);
-    if (!box->free_mask || c->max_blocks - (uint32_t)c->pool_meta->used_blocks < need_blk) {
-        sbo_reclaim_empty(c, sbo_box_at(c, 0));
-        if (!box->free_mask || c->max_blocks - (uint32_t)c->pool_meta->used_blocks < need_blk)
-            return SBO_ALLOC_FAIL;
-    }
+    /* Never reclaim from the root here: it can free `box` (or an ancestor) while
+     * we are still inside it. sbo_alloc reclaims at top level and retries. */
+    if (!box->free_mask && box->child_mask) sbo_reclaim_empty(c, box);
+    if (!box->free_mask || c->max_blocks - (uint32_t)c->pool_meta->used_blocks < need_blk)
+        return SBO_ALLOC_FAIL;
 
     int64_t cid = blocks_alloc(c->pool_meta, c->pool);
     if (cid < 0) return SBO_ALLOC_FAIL;
@@ -631,6 +631,12 @@ uint64_t sbo_alloc(void *metaptr, size_t size) {
             if (sbo_combined(root) >= need_enc) {
                 if (!sbo_try_hint(&c, root, usage, need_enc, &off)) {
                     off = sbo_find_alloc(&c, root, usage, need_enc);
+                    if (off == SBO_ALLOC_FAIL && root->child_mask) {
+                        uint64_t used = c.pool_meta->used_blocks;
+                        sbo_reclaim_empty(&c, root);
+                        if (c.pool_meta->used_blocks < used)
+                            off = sbo_find_alloc(&c, root, usage, need_enc);
+                    }
                     if (off != SBO_ALLOC_FAIL && usage.level >= 1 && usage.level <= 3
                         && c.last_id >= 0) {
                         uint32_t bsh = (uint32_t)usage.level * SBO_N_BITS + 3;

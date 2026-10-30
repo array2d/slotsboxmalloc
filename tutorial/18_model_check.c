@@ -241,6 +241,107 @@ static void phase_single_shard_mt(int nthr, int iters) {
     printf("F single-shard MT done (errors so far=%ld)\n", (long)g_err);
 }
 
+/* Single-shard arena whose box pool holds exactly `blocks` boxes (root included). */
+static uint8_t *tiny_pool_arena(size_t data, uint32_t blocks) {
+    size_t probe = sbo_meta_size(data, 64 * 1024);
+    uint8_t *p = calloc(1, probe);
+    if (!p || sbo_init(p, probe, data) != 0) { free(p); return NULL; }
+    size_t stride = ((sbo_meta_t *)p)->block_stride;
+    free(p);
+    size_t ms = sbo_meta_size(data, blocks * stride);
+    uint8_t *m = calloc(1, ms);
+    if (!m || sbo_init(m, ms, data) != 0 || ((sbo_meta_t *)m)->max_blocks != blocks) {
+        free(m);
+        return NULL;
+    }
+    return m;
+}
+
+static bool overlaps(uint64_t a, uint64_t as, uint64_t b, uint64_t bs) {
+    return a < b + bs && b < a + as;
+}
+
+/* With every object freed, root + (blocks-1) boxes must be rebuildable: each
+ * 63*512B object needs its own L2 box. Fails if a box block leaked. */
+static bool tiny_pool_recoverable(uint8_t *m, uint32_t blocks) {
+    uint64_t o[64];
+    uint32_t n = 0;
+    bool ok = true;
+    for (; n < blocks - 1 && n < 64; n++) {
+        o[n] = sbo_alloc(m, 63 * 512);
+        if (o[n] == FAIL64) { ok = false; break; }
+    }
+    for (uint32_t i = 0; i < n; i++) sbo_free(m, o[i]);
+    return ok;
+}
+
+/* Pool exhausted while the search sits in an empty child box: that box must
+ * not be reclaimed under the in-flight allocation (it used to be, and the new
+ * object landed in a detached box overlapping later allocations). */
+static void phase_tiny_pool(void) {
+    const size_t data = 2097152;
+    uint8_t *m = tiny_pool_arena(data, 3);
+    if (!m) { printf("tiny pool: init fail\n"); g_err++; return; }
+    uint64_t a = sbo_alloc(m, 63 * 512), b = sbo_alloc(m, 63 * 512);
+    if (a == FAIL64 || b == FAIL64) { printf("tiny pool: setup alloc fail\n"); g_err++; free(m); return; }
+    sbo_free(m, b);
+    uint64_t o[3] = {a, sbo_alloc(m, 8), sbo_alloc(m, 63 * 32768)};
+    const size_t req[3] = {63 * 512, 8, 63 * 32768};
+    for (int i = 0; i < 3; i++) {
+        if (o[i] == FAIL64) { printf("tiny pool: alloc %zu failed\n", req[i]); g_err++; continue; }
+        if (sbo_allocated_size(m, o[i]) != expect_cap(req[i])) g_err++;
+        for (int j = 0; j < i; j++)
+            if (o[j] != FAIL64 && overlaps(o[i], expect_cap(req[i]), o[j], expect_cap(req[j]))) {
+                printf("tiny pool: OVERLAP off=%lu and off=%lu\n", (unsigned long)o[i], (unsigned long)o[j]);
+                g_err++;
+            }
+    }
+    for (int i = 0; i < 3; i++) if (o[i] != FAIL64) sbo_free(m, o[i]);
+    if (!tiny_pool_recoverable(m, 3)) { printf("tiny pool: box leaked\n"); g_err++; }
+    free(m);
+    printf("G tiny pool reclaim done (errors so far=%ld)\n", (long)g_err);
+}
+
+/* Randomized churn on a box pool small enough to be exhausted constantly. */
+static void phase_tiny_pool_churn(int iters) {
+    static const size_t szs[] = {8, 100, 512, 4096, 32256, 65536, 300000};
+    const size_t data = 2097152;
+    const uint32_t blocks = 5;
+    uint8_t *m = tiny_pool_arena(data, blocks);
+    if (!m) { printf("tiny churn: init fail\n"); g_err++; return; }
+    uint64_t rs = 0xC0FFEEULL, off[64], cap[64];
+    int nl = 0;
+    long ok = 0;
+    for (int i = 0; i < iters; i++) {
+        if (nl > 0 && (nl == 64 || (rng(&rs) & 1))) {
+            int k = (int)(rng(&rs) % (uint64_t)nl);
+            if (sbo_allocated_size(m, off[k]) != cap[k]) g_err++;
+            sbo_free(m, off[k]);
+            off[k] = off[--nl]; cap[k] = cap[nl];
+            continue;
+        }
+        size_t req = szs[rng(&rs) % (sizeof(szs) / sizeof(szs[0]))];
+        uint64_t o = sbo_alloc(m, req);
+        if (o == FAIL64) continue;
+        ok++;
+        uint64_t c = expect_cap(req);
+        if (sbo_allocated_size(m, o) != c || o + c > data) { g_err++; sbo_free(m, o); continue; }
+        for (int j = 0; j < nl; j++)
+            if (overlaps(o, c, off[j], cap[j])) {
+                printf("tiny churn: OVERLAP iter=%d off=%lu cap=%lu vs off=%lu cap=%lu\n", i,
+                       (unsigned long)o, (unsigned long)c, (unsigned long)off[j], (unsigned long)cap[j]);
+                g_err++;
+                break;
+            }
+        off[nl] = o; cap[nl++] = c;
+    }
+    while (nl > 0) { nl--; sbo_free(m, off[nl]); }
+    if (ok == 0) { printf("tiny churn: no successful allocations\n"); g_err++; }
+    if (!tiny_pool_recoverable(m, blocks)) { printf("tiny churn: box leaked\n"); g_err++; }
+    free(m);
+    printf("H tiny pool churn done (errors so far=%ld)\n", (long)g_err);
+}
+
 int main(int argc, char **argv) {
     if (argc > 3) { printf("usage: %s [threads 1..254] [iters>=1]\n", argv[0]); return 2; }
     int nthr = argc > 1 ? atoi(argv[1]) : 4;
@@ -259,6 +360,8 @@ int main(int argc, char **argv) {
     phase_edges();
     phase_small_arenas();
     phase_single_shard_mt(nthr, iters);
+    phase_tiny_pool();
+    phase_tiny_pool_churn(iters);
     printf("18_model_check: %s\n", g_err == 0 ? "PASS" : "FAIL");
     free(g_meta); free(g_data); free(g_claim);
     return g_err == 0 ? 0 : 1;
