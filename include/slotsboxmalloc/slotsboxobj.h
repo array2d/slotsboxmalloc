@@ -192,7 +192,7 @@ static inline uint8_t sbo_mask_contmax(uint64_t m) {
     uint64_t m32 = m16 & (m16 >> 16);
     uint8_t best = 1;
     uint64_t x = m, y;
-    if (m32) { x = m32; best = 32; }
+    if (m32) { x = m32; best += 32; }
     y = (x >> 16) & m16; if (y) { x = y; best += 16; }
     y = (x >> 8)  & m8;  if (y) { x = y; best += 8;  }
     y = (x >> 4)  & m4;  if (y) { x = y; best += 4;  }
@@ -402,7 +402,6 @@ static uint64_t sbo_find_alloc(sbo_ctx_t *c, sbo_box_t *box,
         box->child_max_count++;
     }
     box->max_obj_cap = sbo_mask_contmax(box->free_mask);
-    sbo_propagate(c, box);
 
     uint64_t sub = sbo_find_alloc(c, ch, usage, need_enc);
     if (sub == SBO_ALLOC_FAIL) {
