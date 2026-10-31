@@ -123,8 +123,15 @@ typedef struct {
     uint8_t  slot_shift;
     uint8_t  box_off;
     uint32_t max_blocks;
-    uint8_t  _pad[2];
+    uint8_t  layout;     /* SBO_LAYOUT_LOCK64 when root_slots > 1, else 0 */
+    uint8_t  _pad[1];
 } sbo_meta_t;
+
+/* Multi-shard metas place the lock array on a 64-byte boundary relative to
+ * meta (pass a 64-byte aligned meta, e.g. from mmap) so each shard's lock and
+ * hot cache own one cache line. Multi-shard metas from v0.1.7 (layout 0) are
+ * rejected rather than misread; the single-shard layout is unchanged. */
+#define SBO_LAYOUT_LOCK64 1
 
 int      sbo_init(void *metaptr, size_t head_size, size_t data_size);
 uint64_t sbo_alloc(void *metaptr, size_t size);
@@ -144,12 +151,18 @@ size_t   sbo_meta_size(size_t data_size, size_t per_slot_pool);
 static inline blocks_meta_t *sbo_pool_meta(sbo_meta_t *meta, uint8_t si) {
     return (blocks_meta_t *)((uint8_t *)(meta + 1)) + si;
 }
+static inline size_t sbo_lock_off(uint8_t shards) {
+    size_t off = sizeof(sbo_meta_t) + (size_t)shards * sizeof(blocks_meta_t);
+    return shards > 1 ? (off + 63) & ~(size_t)63 : off;
+}
+static inline size_t sbo_header_size(uint8_t shards) {
+    return sbo_lock_off(shards) + (size_t)shards * sizeof(sbo_lock_t);
+}
 static inline sbo_lock_t *sbo_pool_lock(sbo_meta_t *meta, uint8_t si) {
-    return (sbo_lock_t *)((uint8_t *)(meta + 1) + meta->root_slots * sizeof(blocks_meta_t)) + si;
+    return (sbo_lock_t *)((uint8_t *)meta + sbo_lock_off(meta->root_slots)) + si;
 }
 static inline uint8_t *sbo_pool_mem(sbo_meta_t *meta, uint8_t si) {
-    return (uint8_t *)(meta + 1)
-           + meta->root_slots * SBO_POOL_HDR
+    return (uint8_t *)meta + sbo_header_size(meta->root_slots)
            + si * meta->per_slot_meta;
 }
 
@@ -461,6 +474,7 @@ static inline bool sbo_magic_ok(const sbo_meta_t *meta) {
 static inline bool sbo_meta_ok(const sbo_meta_t *meta) {
     if (!sbo_magic_ok(meta)) return false;
     if (meta->root_slots != 1 && meta->root_slots != SBO_MAX_SHARDS) return false;
+    if (meta->root_slots > 1 && meta->layout != SBO_LAYOUT_LOCK64) return false;
     if (meta->shard_mask != meta->root_slots - 1) return false;
     if (meta->slot_shift < 9 || meta->slot_shift >= 64) return false;
     if (meta->data_size == 0
@@ -512,7 +526,7 @@ int sbo_init(void *metaptr, size_t head_size, size_t data_size) {
     uint8_t shards = sbo_shards_for_data(data_size);
     size_t header_base, per_slot_meta;
     for (;;) {
-        header_base = sizeof(sbo_meta_t) + (size_t)shards * SBO_POOL_HDR;
+        header_base = sbo_header_size(shards);
         if (head_size <= header_base) return -1;
         per_slot_meta = ((head_size - header_base) / shards) & ~(size_t)7;
         if (shards == 1
@@ -528,7 +542,8 @@ int sbo_init(void *metaptr, size_t head_size, size_t data_size) {
     meta->shard_mask = (uint8_t)(shards - 1);
     meta->slot_shift = (uint8_t)__builtin_ctzll(data_size / shards);
     meta->per_slot_meta = per_slot_meta;
-    memset((uint8_t *)(meta + 1), 0, (size_t)shards * SBO_POOL_HDR);
+    meta->layout = shards > 1 ? SBO_LAYOUT_LOCK64 : 0;
+    memset((uint8_t *)(meta + 1), 0, header_base - sizeof(*meta));
 
     uint8_t root_level =
         (uint8_t)(sbo_align_to(slots / shards).level - 1);
@@ -728,7 +743,7 @@ void *sbo_data_ptr(void *metaptr, void *data_base, uint64_t obj_offset) {
 
 size_t sbo_meta_size(size_t data_size, size_t per_slot_pool) {
     uint8_t shards = sbo_shards_for_data(data_size);
-    return sizeof(sbo_meta_t) + (size_t)shards * (SBO_POOL_HDR + per_slot_pool);
+    return sbo_header_size(shards) + (size_t)shards * per_slot_pool;
 }
 
 #endif /* SLOTSBOXMALLOC_IMPLEMENTATION */
