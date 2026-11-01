@@ -54,7 +54,8 @@ typedef struct {
     atomic_int lock;
     uint32_t   hot_id1[3];
     uint64_t   hot_base[3];
-    uint8_t    _pad[24];
+    uint8_t    no_reclaimable;
+    uint8_t    _pad[23];
 } sbo_lock_t;
 _Static_assert(ATOMIC_INT_LOCK_FREE == 2, "atomic_int must be lock-free");
 _Static_assert(sizeof(sbo_lock_t) == 64, "sbo_lock_t must be 64 bytes");
@@ -188,7 +189,7 @@ static inline sbo_ctx_t sbo_ctx_for(sbo_meta_t *meta, uint8_t si, sbo_lock_t *lk
     return c;
 }
 static inline sbo_box_t *sbo_box_at(const sbo_ctx_t *c, int32_t id) {
-    return (sbo_box_t *)(c->pool + (uint32_t)id * c->stride + c->head);
+    return (sbo_box_t *)(c->pool + (size_t)(uint32_t)id * c->stride + c->head);
 }
 
 static inline uint8_t sbo_mask_contmax(uint64_t m) {
@@ -353,6 +354,8 @@ static inline void sbo_free_obj_slots(const sbo_ctx_t *c, sbo_box_t *box, uint8_
     if (start + len > SBO_N) return;
     box->states[start] = SBO_FREE;
     box->free_mask |= (((1ULL << len) - 1ULL) << start);
+    if (box->parent >= 0 && box->free_mask == ~0ULL && box->child_mask == 0)
+        c->lk->no_reclaimable = 0;
     sbo_after_mask_change(c, box);
 }
 
@@ -390,11 +393,11 @@ static uint64_t sbo_find_alloc(sbo_ctx_t *c, sbo_box_t *box,
     }
 
     uint32_t need_blk = (uint32_t)(box->objlevel - usage.level);
-    if (!box->free_mask || c->max_blocks - (uint32_t)c->pool_meta->used_blocks < need_blk) {
-        sbo_reclaim_empty(c, sbo_box_at(c, 0));
-        if (!box->free_mask || c->max_blocks - (uint32_t)c->pool_meta->used_blocks < need_blk)
-            return SBO_ALLOC_FAIL;
-    }
+    /* Never reclaim from the root here: it can free `box` (or an ancestor) while
+     * we are still inside it. sbo_alloc reclaims at top level and retries. */
+    if (!box->free_mask && box->child_mask) sbo_reclaim_empty(c, box);
+    if (!box->free_mask || c->max_blocks - (uint32_t)c->pool_meta->used_blocks < need_blk)
+        return SBO_ALLOC_FAIL;
 
     int64_t cid = blocks_alloc(c->pool_meta, c->pool);
     if (cid < 0) return SBO_ALLOC_FAIL;
@@ -641,11 +644,20 @@ uint64_t sbo_alloc(void *metaptr, size_t size) {
             sbo_ctx_t c = sbo_ctx_for(meta, (uint8_t)si, lk);
             sbo_box_t *root = sbo_box_at(&c, 0);
             uint64_t off = SBO_ALLOC_FAIL;
-            if (sbo_combined(root) < need_enc && root->child_mask)
+            if (sbo_combined(root) < need_enc && root->child_mask && !lk->no_reclaimable) {
                 sbo_reclaim_empty(&c, root);
+                lk->no_reclaimable = 1;
+            }
             if (sbo_combined(root) >= need_enc) {
                 if (!sbo_try_hint(&c, root, usage, need_enc, &off)) {
                     off = sbo_find_alloc(&c, root, usage, need_enc);
+                    if (off == SBO_ALLOC_FAIL && root->child_mask && !lk->no_reclaimable) {
+                        uint64_t used = c.pool_meta->used_blocks;
+                        sbo_reclaim_empty(&c, root);
+                        lk->no_reclaimable = 1;
+                        if (c.pool_meta->used_blocks < used)
+                            off = sbo_find_alloc(&c, root, usage, need_enc);
+                    }
                     if (off != SBO_ALLOC_FAIL && usage.level >= 1 && usage.level <= 3
                         && c.last_id >= 0) {
                         uint32_t bsh = (uint32_t)usage.level * SBO_N_BITS + 3;
